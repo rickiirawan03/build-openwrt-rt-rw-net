@@ -1,0 +1,137 @@
+name: OpenWrt Build RT/RW Net
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'OpenWrt Version (e.g., openwrt-23.05.2)'
+        required: true
+        default: 'openwrt-23.05.2'
+      arch:
+        description: 'Target Architecture'
+        required: true
+        default: 'x86/64'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang flex bison gawk g++ git libncurses-dev zlib1g-dev libssl-dev python3 python3-distutils unzip libtool
+          df -h
+
+      - name: Download OpenWrt Source
+        run: |
+          git clone https://git.openwrt.org/openwrt/openwrt.git openwrt-source
+          cd openwrt-source
+          git checkout ${{ github.event.inputs.version }}
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Create Configuration File
+        run: |
+          cat << EOF > openwrt-source/.config
+          # Target system and architecture
+          CONFIG_TARGET_x86=y
+          CONFIG_TARGET_x86_64=y
+          CONFIG_TARGET_BOARD="x86"
+          
+          # General options
+          CONFIG_PACKAGE_opennds=y
+          CONFIG_PACKAGE_opennds-auth-fhs=y
+          CONFIG_PACKAGE_luci=y
+          CONFIG_PACKAGE_luci-app-firewall=y
+          CONFIG_PACKAGE_luci-theme-bootstrap=y
+          CONFIG_PACKAGE_luci-app-commands=y
+          CONFIG_PACKAGE_php8=y
+          CONFIG_PACKAGE_php8-cgi=y
+          CONFIG_PACKAGE_php8-mod-json=y
+          CONFIG_PACKAGE_php8-mod-session=y
+          CONFIG_PACKAGE_php8-mod-mbstring=y
+          CONFIG_PACKAGE_php8-mod-xml=y
+          CONFIG_PACKAGE_nginx=y
+          
+          # Network and utilities
+          CONFIG_PACKAGE_sqm-scripts=y
+          CONFIG_PACKAGE_luci-app-sqm=y
+          CONFIG_PACKAGE_bind-dig=y
+          CONFIG_PACKAGE_nano=y
+          CONFIG_PACKAGE_tcpdump=y
+          
+          # Filesystem
+          CONFIG_PACKAGE_kmod-fs-ext4=y
+          CONFIG_PACKAGE_e2fsprogs=y
+          
+          # Image build options
+          CONFIG_TARGET_IMAGES_GZIP=y
+          CONFIG_TARGET_ROOTFS_EXT4FS=y
+          CONFIG_TARGET_SQUASHFS_BLOCK_SIZE_256K=y
+          
+          # --- Tambahan untuk kebutuhan RT/RW Net ---
+          
+          # Tema Argon dan paket terkait
+          CONFIG_PACKAGE_luci-theme-argon=y
+          CONFIG_PACKAGE_luci-app-argon-config=y
+          
+          # Dukungan PPPoE
+          CONFIG_PACKAGE_ppp=y
+          CONFIG_PACKAGE_ppp-mod-pppoe=y
+          
+          # Driver Wi-Fi (ath9k)
+          CONFIG_PACKAGE_kmod-ath9k=y
+          
+          # WPA Supplicant dengan OpenSSL
+          CONFIG_PACKAGE_wpad-openssl=y
+          
+          # Database dan Freeradius
+          CONFIG_PACKAGE_freeradius3=y
+          CONFIG_PACKAGE_freeradius3-mod-sql=y
+          CONFIG_PACKAGE_freeradius3-mod-perl=y
+          CONFIG_PACKAGE_mariadb-server=y
+          
+          # Monitoring dan Utilitas
+          CONFIG_PACKAGE_vnstat=y
+          CONFIG_PACKAGE_luci-app-statistics=y
+          CONFIG_PACKAGE_collectd=y
+          CONFIG_PACKAGE_collectd-mod-cpu=y
+          CONFIG_PACKAGE_collectd-mod-memory=y
+          
+          # Keamanan
+          CONFIG_PACKAGE_openssh-server=y
+          CONFIG_PACKAGE_strongswan=y
+          
+          # Aktifkan Wi-Fi secara otomatis saat boot
+          CONFIG_PACKAGE_network_config_extra=y
+          CONFIG_PACKAGE_network_config_extra_default=y
+          
+          EOF
+        working-directory: ./openwrt-source
+
+      - name: Run make defconfig
+        run: |
+          make defconfig
+        working-directory: ./openwrt-source
+
+      - name: Compile OpenWrt
+        id: compile
+        run: |
+          make -j$(nproc) V=s
+        working-directory: ./openwrt-source
+
+      - name: Prepare Artifacts
+        run: |
+          mkdir -p artifacts
+          cp openwrt-source/bin/targets/x86/64/openwrt-*.img.gz ./artifacts/
+        working-directory: ./
+
+      - name: Upload Firmware as Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: openwrt-firmware
+          path: artifacts/
