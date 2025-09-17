@@ -131,7 +131,7 @@ jobs:
         working-directory: ./
 
       - name: Upload Firmware as Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: openwrt-firmware
           path: artifacts/
