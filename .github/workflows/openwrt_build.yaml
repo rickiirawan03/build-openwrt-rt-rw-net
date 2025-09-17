@@ -1,4 +1,4 @@
-name: Build OpenWrt x86_64 RTRWNet
+name: Build OpenWrt RTRWNet x86_64
 
 on:
   workflow_dispatch:
@@ -11,66 +11,99 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout OpenWrt
+    - name: Checkout source
       uses: actions/checkout@v4
-      with:
-        repository: openwrt/openwrt
-        ref: v24.05.0-rc2 # Ganti dengan tag/release sesuai kebutuhan
 
-    - name: Install build dependencies
+    - name: Setup build dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          build-essential clang flex g++ gawk gcc-multilib git libncurses-dev libssl-dev python3-distutils python3-setuptools rsync unzip zlib1g-dev file wget
+          build-essential clang flex g++ gawk gcc-multilib gettext git libncurses-dev libssl-dev python3-distutils python3-pyelftools python3-setuptools python3-pip rsync unzip zlib1g-dev file wget libelf-dev ecj subversion
 
-    - name: Update and install feeds
+    - name: Clone OpenWrt
       run: |
+        git clone --depth 1 https://github.com/openwrt/openwrt.git -b v24.05.0 openwrt
+        cd openwrt
         ./scripts/feeds update -a
         ./scripts/feeds install -a
 
-    - name: Configure target and packages
+    - name: Replace/extend feeds for theme Argon, openNDS, freeradius3, daloradius
       run: |
-        cp feeds.conf.default feeds.conf
-        make defconfig
-        # Tambahkan paket-paket kebutuhan RTRW Net
-        cat >>.config <<EOF
+        cd openwrt
+        # Theme Argon
+        git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
 
+        # openNDS (jika belum ada di feeds, override)
+        git clone --depth 1 https://github.com/openNDS/openNDS.git package/opennds
+
+        # daloradius (Web untuk Freeradius, biasanya manual install, contoh fetch)
+        wget https://github.com/lirantal/daloradius/archive/refs/heads/master.zip -O daloradius.zip
+        unzip daloradius.zip -d package/
+        mv package/daloradius-master package/daloradius
+
+    - name: Create custom config
+      run: |
+        cd openwrt
+        cat <<EOF > .config
         CONFIG_TARGET_x86=y
         CONFIG_TARGET_x86_64=y
+        CONFIG_TARGET_x86_64_Generic=y
 
-        CONFIG_PACKAGE_kmod-ath9k=y
-        CONFIG_PACKAGE_opennds=y
-        CONFIG_PACKAGE_wpad-openssl=y
+        # LuCI
         CONFIG_PACKAGE_luci=y
+        CONFIG_PACKAGE_luci-ssl=y
+        CONFIG_PACKAGE_luci-theme-argon=y
         CONFIG_PACKAGE_luci-app-firewall=y
-        CONFIG_PACKAGE_luci-app-opennds=y
+
+        # Network Tools
         CONFIG_PACKAGE_iptables=y
-        CONFIG_PACKAGE_ip-full=y
+        CONFIG_PACKAGE_iptables-mod-tproxy=y
         CONFIG_PACKAGE_ppp=y
         CONFIG_PACKAGE_pppoe=y
-        CONFIG_PACKAGE_pppoe-server=y
-        CONFIG_PACKAGE_uhttpd=y
-        CONFIG_PACKAGE_firewall4=y
-        # Tambahkan paket lain sesuai kebutuhan
+        CONFIG_PACKAGE_wireguard=y
 
+        # RTRWNet Essentials
+        CONFIG_PACKAGE_dhcpdump=y
+        CONFIG_PACKAGE_ddns-scripts=y
+        CONFIG_PACKAGE_ddns-scripts-cloudflare=y
+        CONFIG_PACKAGE_adblock=y
+        CONFIG_PACKAGE_uhttpd=y
+        CONFIG_PACKAGE_vsftpd=y
+        CONFIG_PACKAGE_samba4-server=y
+        CONFIG_PACKAGE_nftables=y
+
+        # openNDS, Freeradius3, Daloradius
+        CONFIG_PACKAGE_opennds=y
+        CONFIG_PACKAGE_freeradius3=y
+        CONFIG_PACKAGE_php7=y
+        CONFIG_PACKAGE_php7-cgi=y
+        CONFIG_PACKAGE_php7-mod-mysqli=y
+        CONFIG_PACKAGE_php7-mod-gd=y
+        CONFIG_PACKAGE_php7-mod-json=y
+        CONFIG_PACKAGE_php7-mod-session=y
+        CONFIG_PACKAGE_php7-mod-curl=y
+        CONFIG_PACKAGE_mariadb-server=y
+        CONFIG_PACKAGE_mariadb-client=y
+        CONFIG_PACKAGE_apache=y
+
+        # Utilities
+        CONFIG_PACKAGE_htop=y
+        CONFIG_PACKAGE_screen=y
+        CONFIG_PACKAGE_wget=y
+        CONFIG_PACKAGE_curl=y
+
+        # Add more packages as needed...
         EOF
 
-        make defconfig
-
-    - name: Download sources
-      run: make download -j8
-
     - name: Build firmware
-      run: make -j$(nproc) V=s
-
-    - name: Collect firmware images
-      if: success()
       run: |
-        mkdir -p output
-        find bin/targets/ -type f -name '*combined*img*' -or -name '*vmlinuz*' -or -name '*rootfs*' | xargs -I{} cp {} output/
+        cd openwrt
+        make defconfig
+        make download -j$(nproc) || make download -j1 V=s
+        make -j$(nproc) V=s
 
-    - name: Upload firmware artifact
+    - name: Upload firmware
       uses: actions/upload-artifact@v4
       with:
-        name: openwrt-x86_64-firmware
-        path: output/
+        name: openwrt-x86_64-RTRWNET
+        path: openwrt/bin/targets/x86/64/*.img.gz
