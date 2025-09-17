@@ -65,21 +65,19 @@ jobs:
         CONFIG_PACKAGE_htop=y
         EOF
         make defconfig
-
     - name: Enable WiFi by default (uci-defaults script)
       run: |
-        cd openwrt/files/etc/uci-defaults
-        mkdir -p .
-        cat <<'EOW' > 99-wifi-on
+       mkdir -p openwrt/files/etc/uci-defaults
+        cat <<'EOW' > openwrt/files/etc/uci-defaults/99-wifi-on
         #!/bin/sh
         uci set wireless.@wifi-device[0].disabled=0
         uci set wireless.@wifi-iface[0].ssid='OpenWrt'
         uci set wireless.@wifi-iface[0].encryption='psk2'
-        uci set wireless.@wifi-iface[0].key='12345678'
+        uci set wireless.@wifi-iface[0].key='passwordwifi'
         uci commit wireless
         wifi reload
-        EOW
-        chmod +x 99-wifi-on
+       EOW
+       chmod +x openwrt/files/etc/uci-defaults/99-wifi-on
 
     - name: Build OpenWrt (x86_64, multicore)
       run: |
