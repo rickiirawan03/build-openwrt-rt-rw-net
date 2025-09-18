@@ -1,28 +1,20 @@
 #
-# Nama Workflow: Build OpenWrt x86/64 untuk RTWnet
+# Nama Workflow: Build OpenWrt x86/64 untuk RTWnet (v3 - Perbaikan Error)
 #
 # Arsitektur: x86/64
 #
-# Deskripsi:
-# Workflow ini mengkompilasi firmware OpenWrt untuk perangkat x86/64 (PC/VM),
-# dioptimalkan sebagai server RTWnet.
-#
-# Termasuk paket:
-# - Manajemen Jaringan: PPPoE
-# - Hotspot Voucher: OpenNDS (Captive Portal)
-# - Tunneling: OpenClash (versi terbaru)
-# - Tampilan: Luci Theme Argon & Argon Config
-# - Driver Esensial: Intel/Realtek LAN, USB Storage, Filesystem EXT4 & NTFS
+# Perubahan:
+# - Memperbaiki error "target pattern contains no '%'".
+# - Mengubah metode penambahan tema Argon & konfigurasinya menjadi git clone langsung
+#   untuk stabilitas yang lebih baik.
 #
 
 name: Build OpenWrt x86/64 RTWnet
 
 on:
-  # Jalankan saat ada push ke branch 'main'
   push:
     branches:
       - main
-  # Izinkan untuk dijalankan secara manual dari tab Actions di GitHub
   workflow_dispatch:
 
 jobs:
@@ -46,18 +38,14 @@ jobs:
 
       - name: 3. Kloning Source Code OpenWrt
         run: |
-          # Menggunakan branch openwrt-23.05 sebagai basis stabil.
-          # Ganti ke branch rilis resmi '24.10' jika sudah tersedia nanti.
           git clone https://github.com/openwrt/openwrt.git -b openwrt-23.05 openwrt
           cd openwrt
 
-      - name: 4. Tambah Feed Paket Kustom (OpenClash, Argon)
+      - name: 4. Tambah Feed Paket Kustom (Hanya OpenClash)
         working-directory: ./openwrt
         run: |
-          # Tambahkan feed paket kustom
+          # Hanya OpenClash yang ditambahkan sebagai feed, sisanya akan di-clone manual
           echo 'src-git-full openclash https://github.com/vernesong/luci-app-openclash.git' >> feeds.conf.default
-          echo 'src-git-full argon https://github.com/jerrykuku/luci-theme-argon.git' >> feeds.conf.default
-          echo 'src-git-full argon_config https://github.com/jerrykuku/luci-app-argon-config.git' >> feeds.conf.default
 
       - name: 5. Update & Install Feeds
         working-directory: ./openwrt
@@ -65,12 +53,17 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: 6. Buat File Konfigurasi (.config) untuk x86/64
+      - name: 6. Kloning Tema Argon & Konfigurasi Secara Manual
         working-directory: ./openwrt
         run: |
-          # Hapus file config yang ada jika ada untuk memulai dari awal
-          rm -f .config
+          # Metode ini lebih stabil daripada menggunakan feeds
+          git clone https://github.com/jerrykuku/luci-theme-argon.git package/luci-theme-argon
+          git clone https://github.com/jerrykuku/luci-app-argon-config.git package/luci-app-argon-config
 
+      - name: 7. Buat File Konfigurasi (.config) untuk x86/64
+        working-directory: ./openwrt
+        run: |
+          rm -f .config
           # --- Konfigurasi untuk Target x86/64 ---
           cat <<EOF > .config
           # Target Arsitektur
@@ -78,45 +71,41 @@ jobs:
           CONFIG_TARGET_x86_64=y
           CONFIG_TARGET_x86_64_generic=y
 
-          # Format Image (Pilih yang sesuai kebutuhan)
-          # combined-ext4.img.gz -> untuk instalasi langsung ke disk
-          # combined-squashfs.img.gz -> sistem read-only, perubahan disimpan terpisah
+          # Format Image
           CONFIG_TARGET_IMAGES_GZIP=y
           CONFIG_TARGET_IMAGES_PAD=y
           CONFIG_GRUB_IMAGES=y
-          CONFIG_VMDK_IMAGES=y # Untuk Virtual Machine (VMware, VirtualBox)
+          CONFIG_VMDK_IMAGES=y
 
-          # Kernel Modules -> Network Devices (Driver Kartu Jaringan)
-          # Sangat penting untuk hardware PC
-          CONFIG_PACKAGE_kmod-e1000e=y # Intel Gigabit Ethernet
-          CONFIG_PACKAGE_kmod-r8169=y # Realtek Gigabit Ethernet
-          # Tambahkan driver lain jika perlu, misal: kmod-igb, kmod-ixgbe
+          # Kernel Modules -> Network Devices
+          CONFIG_PACKAGE_kmod-e1000e=y
+          CONFIG_PACKAGE_kmod-r8169=y
 
-          # Kernel Modules -> USB Support (Driver USB)
+          # Kernel Modules -> USB Support
           CONFIG_PACKAGE_kmod-usb-storage=y
           CONFIG_PACKAGE_usbutils=y
 
-          # Kernel Modules -> Filesystems (Driver Sistem File)
+          # Kernel Modules -> Filesystems
           CONFIG_PACKAGE_kmod-fs-ext4=y
-          CONFIG_PACKAGE_kmod-fs-ntfs3=y # Untuk membaca/menulis partisi NTFS
+          CONFIG_PACKAGE_kmod-fs-ntfs3=y
           CONFIG_PACKAGE_block-mount=y
 
           # LuCI -> 3. Applications
           CONFIG_PACKAGE_luci-app-argon-config=y
           CONFIG_PACKAGE_luci-app-openclash=y
-          CONFIG_PACKAGE_luci-app-opennds=y # Aplikasi Captive Portal OpenNDS
+          CONFIG_PACKAGE_luci-app-opennds=y
 
           # LuCI -> 4. Themes
           CONFIG_PACKAGE_luci-theme-argon=y
 
           # Network -> Captive Portals
-          CONFIG_PACKAGE_opennds=y # Paket inti OpenNDS
+          CONFIG_PACKAGE_opennds=y
 
           # Network -> PPP
           CONFIG_PACKAGE_ppp=y
           CONFIG_PACKAGE_ppp-mod-pppoe=y
 
-          # Network -> WirelessAPD (Wajib ada, meskipun x86 tidak punya Wi-Fi bawaan)
+          # Network -> WirelessAPD
           CONFIG_PACKAGE_wpad-openssl=y
           # CONFIG_PACKAGE_wpad-basic-wolfssl is not set
 
@@ -125,30 +114,27 @@ jobs:
           CONFIG_PACKAGE_htop=y
           CONFIG_PACKAGE_nano=y
           EOF
-
-          # Terapkan konfigurasi
           make defconfig
 
-      - name: 7. Unduh Paket & Toolchain
+      - name: 8. Unduh Paket & Toolchain
         working-directory: ./openwrt
         run: |
           make download -j$(nproc) || make download -j1 V=s
 
-      - name: 8. Build Firmware
+      - name: 9. Build Firmware
         working-directory: ./openwrt
         run: |
           echo "Memulai proses build x86/64, ini akan memakan waktu..."
           make -j$(nproc) V=s || make -j1 V=s
 
-      - name: 9. Siapkan & Unggah Artifacts
+      - name: 10. Siapkan & Unggah Artifacts
         run: |
           mkdir -p ./artifact/
-          # Path output untuk arsitektur x86/64
           cp -r ./openwrt/bin/targets/x86/64/* ./artifact/
           cd ./artifact/
           zip -r OpenWrt-x86-64-Firmware-RTWnet.zip .
 
-      - name: 10. Unggah Firmware ke Artifacts
+      - name: 11. Unggah Firmware ke Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: OpenWrt-x86-64-Firmware-RTWnet
