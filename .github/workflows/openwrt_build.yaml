@@ -36,22 +36,21 @@ jobs:
           # Masuk ke direktori Image Builder
           cd ${BUILDER_DIR}
 
-          # Daftar paket kustom yang akan di-install ke dalam firmware
-          # Backslash (\) digunakan agar daftar paket lebih mudah dibaca
-          PACKAGES="luci luci-ssl-openssl opennds freeradius3 \
-                    kmod-ath9k wpad-openssl rp-ppoe-server \
+          # =================== PERUBAHAN DI SINI ===================
+          # Hapus paket default wolfssl untuk menghindari konflik, lalu tambahkan paket yang kita inginkan.
+          # Driver kmod-ath9k juga dihapus karena tidak relevan untuk target x86.
+          PACKAGES="-wpad-basic-wolfssl -libwolfssl \
+                    luci luci-ssl-openssl opennds freeradius3 \
+                    wpad-openssl rp-ppoe-server \
                     luci-app-opennds nano htop"
+          # =========================================================
 
           # Jalankan perintah 'make' untuk membuat image firmware
-          # Perintah ini dijalankan di dalam direktori BUILDER_DIR
           make image PROFILE="generic" PACKAGES="${PACKAGES}"
 
       # Langkah 4: Mengunggah hasil build sebagai artifact
       - name: 4. Upload Firmware Artifact
         uses: actions/upload-artifact@v4
         with:
-          # Nama artifact yang akan muncul di halaman ringkasan workflow
           name: openwrt-22.03.0-x86_64-firmware
-          # Path ke file image yang sudah jadi. Wildcard (*) digunakan untuk mencocokkan nama file yang dinamis
           path: openwrt-imagebuilder-22.03.0-x86-64.Linux-x86_64/bin/targets/x86/64/*.img.gz
-
