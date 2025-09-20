@@ -60,31 +60,28 @@ jobs:
       - name: Create .config
         run: |
           cd openwrt-src
-          cat > .config <<'EOF'
-CONFIG_TARGET_x86=y
-CONFIG_TARGET_x86_64=y
-CONFIG_TARGET_x86_64_generic=y
-
-CONFIG_PACKAGE_luci=y
-CONFIG_PACKAGE_nginx=y
-CONFIG_PACKAGE_nginx-mod-luci=y
-CONFIG_PACKAGE_php8=y
-CONFIG_PACKAGE_php8-cli=y
-CONFIG_PACKAGE_php8-cgi=y
-CONFIG_PACKAGE_php8-fpm=y
-CONFIG_PACKAGE_php8-fastcgi=y
-CONFIG_PACKAGE_freeradius3=y
-CONFIG_PACKAGE_freeradius3-utils=y
-CONFIG_PACKAGE_freeradius3-default=y
-CONFIG_PACKAGE_opennds=y
-CONFIG_PACKAGE_luci-theme-argon=y
-CONFIG_PACKAGE_luci-app-argon-config=y
-CONFIG_PACKAGE_mwan3=y
-CONFIG_PACKAGE_luci-app-mwan3=y
-CONFIG_PACKAGE_kmod-ath9k=y
-CONFIG_PACKAGE_wpad-openssl=y
-CONFIG_PACKAGE_openclash=y
-EOF
+          echo "CONFIG_TARGET_x86=y" > .config
+          echo "CONFIG_TARGET_x86_64=y" >> .config
+          echo "CONFIG_TARGET_x86_64_generic=y" >> .config
+          echo "CONFIG_PACKAGE_luci=y" >> .config
+          echo "CONFIG_PACKAGE_nginx=y" >> .config
+          echo "CONFIG_PACKAGE_nginx-mod-luci=y" >> .config
+          echo "CONFIG_PACKAGE_php8=y" >> .config
+          echo "CONFIG_PACKAGE_php8-cli=y" >> .config
+          echo "CONFIG_PACKAGE_php8-cgi=y" >> .config
+          echo "CONFIG_PACKAGE_php8-fpm=y" >> .config
+          echo "CONFIG_PACKAGE_php8-fastcgi=y" >> .config
+          echo "CONFIG_PACKAGE_freeradius3=y" >> .config
+          echo "CONFIG_PACKAGE_freeradius3-utils=y" >> .config
+          echo "CONFIG_PACKAGE_freeradius3-default=y" >> .config
+          echo "CONFIG_PACKAGE_opennds=y" >> .config
+          echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-argon-config=y" >> .config
+          echo "CONFIG_PACKAGE_mwan3=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-mwan3=y" >> .config
+          echo "CONFIG_PACKAGE_kmod-ath9k=y" >> .config
+          echo "CONFIG_PACKAGE_wpad-openssl=y" >> .config
+          echo "CONFIG_PACKAGE_openclash=y" >> .config
 
       - name: Copy overlay files
         run: |
