@@ -1,153 +1,174 @@
-name: Build OpenWrt 22.03.7 x86_64
+name: Build OpenWrt x86_64 full buildroot
 
 on:
+  push:
+    branches: [ main ]
   workflow_dispatch:
+
+env:
+  OPENWRT_REPO: https://github.com/openwrt/openwrt.git
+  OPENWRT_VERSION: "v24.10.2"
+  TARGET_PROFILE: "x86/64"
+  JOBS: "2"
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Install dependencies
-      run: |
-        sudo apt update
-        sudo apt install -y build-essential clang flex bison g++ gawk \
-          gcc-multilib g++-multilib gettext git libncurses5-dev libssl-dev \
-          python3-setuptools rsync swig unzip zlib1g-dev file wget
+      - name: Setup build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache gawk gcc-multilib \
+            libncurses5-dev libssl-dev subversion git unzip time rsync wget
 
-    - name: Download OpenWrt ImageBuilder
-      run: |
-        wget https://archive.openwrt.org/releases/22.03.7/targets/x86/64/openwrt-imagebuilder-22.03.7-x86-64.Linux-x86_64.tar.xz
-        tar -xf openwrt-imagebuilder-22.03.7-x86-64.Linux-x86_64.tar.xz
-        mv openwrt-imagebuilder-22.03.7-x86-64.Linux-x86_64 imagebuilder
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-${{ github.ref }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
 
-    - name: List available packages
-      working-directory: ./imagebuilder
-      run: |
-        make info > ../available-packages.txt
+      - name: Clone OpenWrt source
+        run: |
+          git clone --depth 1 "${{ env.OPENWRT_REPO }}" openwrt-src
+          cd openwrt-src
+          git fetch --tags --depth=1 origin
+          git checkout "${{ env.OPENWRT_VERSION }}" || true
 
-    - name: Upload available packages list
-      uses: actions/upload-artifact@v4
-      with:
-        name: available-packages
-        path: available-packages.txt
+      - name: Prepare feeds and custom packages
+        run: |
+          cd openwrt-src
+          cat >> feeds.conf.default <<'EOF'
+src-git packages https://git.openwrt.org/feed/packages.git
+src-git luci https://git.openwrt.org/project/luci.git
+src-git routing https://git.openwrt.org/feed/routing.git
+src-git telephony https://git.openwrt.org/feed/telephony.git
+EOF
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-    - name: Filter wanted packages
-      id: filter
-      working-directory: ./imagebuilder
-      run: |
-        # Paket yang diminta
-        WANTED="kmod-ath9k wpad-openssl freeradius3 freeradius3-utils freeradius3-default \
-        php8 php8-cli php8-cgi php8-fpm \
-        nginx opennds mariadb-server mariadb-client \
-        luci luci-app-argon-config \
-        mwan3 luci-app-mwan3"
+          mkdir -p package/community
+          git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon.git package/community/luci-theme-argon
+          git clone --depth 1 https://github.com/jerrykuku/luci-app-argon-config.git package/community/luci-app-argon-config
+          git clone --depth 1 https://github.com/vernesong/OpenClash.git package/community/openclash
+          git clone --depth 1 https://github.com/openNDS/openNDS.git package/community/opennds || true
 
-        # Daftar paket tersedia
-        AVAILABLE=$(awk '/^Package:/ {print $2}' ../available-packages.txt | sort -u)
-        FINAL=""
-        for pkg in $WANTED; do
-          if echo "$AVAILABLE" | grep -q "^$pkg$"; then
-            FINAL="$FINAL $pkg"
-          else
-            echo "⚠️ Package not found, skipping: $pkg"
-          fi
-        done
-        echo "FINAL_PACKAGES=$FINAL" >> $GITHUB_ENV
+      - name: Create .config
+        run: |
+          cd openwrt-src
+          cat > .config <<'EOF'
+CONFIG_TARGET_x86=y
+CONFIG_TARGET_x86_64=y
+CONFIG_TARGET_x86_64_generic=y
 
-    - name: Add uci-defaults configs
-      working-directory: ./imagebuilder
-      run: |
-        mkdir -p files/etc/uci-defaults
-        mkdir -p files/www/nds
+CONFIG_PACKAGE_luci=y
+CONFIG_PACKAGE_nginx=y
+CONFIG_PACKAGE_nginx-mod-luci=y
+CONFIG_PACKAGE_php8=y
+CONFIG_PACKAGE_php8-cli=y
+CONFIG_PACKAGE_php8-cgi=y
+CONFIG_PACKAGE_php8-fpm=y
+CONFIG_PACKAGE_php8-fastcgi=y
+CONFIG_PACKAGE_freeradius3=y
+CONFIG_PACKAGE_freeradius3-utils=y
+CONFIG_PACKAGE_freeradius3-default=y
+CONFIG_PACKAGE_opennds=y
+CONFIG_PACKAGE_luci-theme-argon=y
+CONFIG_PACKAGE_luci-app-argon-config=y
+CONFIG_PACKAGE_mwan3=y
+CONFIG_PACKAGE_luci-app-mwan3=y
+CONFIG_PACKAGE_kmod-ath9k=y
+CONFIG_PACKAGE_wpad-openssl=y
+CONFIG_PACKAGE_openclash=y
+EOF
 
-        # WiFi SSID Latihan
-        cat > files/etc/uci-defaults/99-wifi << "EOF"
-        #!/bin/sh
-        uci batch <<EOT
-          set wireless.radio0.disabled='0'
-          set wireless.default_radio0=wifi-iface
-          set wireless.default_radio0.device='radio0'
-          set wireless.default_radio0.network='lan'
-          set wireless.default_radio0.mode='ap'
-          set wireless.default_radio0.ssid='Latihan'
-          set wireless.default_radio0.encryption='none'
-        EOT
-        uci commit wireless
-        wifi reload
-        EOF
-        chmod +x files/etc/uci-defaults/99-wifi
+      - name: Copy overlay files
+        run: |
+          cd openwrt-src
+          mkdir -p files/etc/uci-defaults
+          mkdir -p files/etc/nginx/conf.d
+          mkdir -p files/etc/opennds
+          mkdir -p files/www/nds
 
-        # Nginx (80 + 2080)
-        cat > files/etc/uci-defaults/99-nginx << "EOF"
-        #!/bin/sh
-        uci batch <<EOT
-          set nginx.main=nginx
-          set nginx.main.enabled='1'
+          cat > files/etc/uci-defaults/99-enable-wifi-and-services <<'EOF'
+#!/bin/sh
+uci set wireless.@wifi-device[0].disabled='0' || true
+uci foreach wifi-iface 'uci set wireless.@wifi-iface[$id].disabled=0' || true
+uci commit wireless
 
-          set nginx.http=server
-          set nginx.http.listen='80'
-          set nginx.http.server_name='_'
-          set nginx.http.locations='/'
-          set nginx.http.locations.target='/www'
+uci -q batch <<-EOC
+set firewall.allow_nginx=rule
+set firewall.allow_nginx.name='Allow-Nginx-2080'
+set firewall.allow_nginx.src='*'
+set firewall.allow_nginx.dest_port='2080'
+set firewall.allow_nginx.target='ACCEPT'
+set firewall.allow_nginx.proto='tcp'
+commit firewall
+EOC
 
-          add nginx server
-          set nginx.@server[-1].listen='2080'
-          set nginx.@server[-1].server_name='_'
-          add_list nginx.@server[-1].locations='/'
-          set nginx.@server[-1].locations='/'.target='/www'
-        EOT
-        uci commit nginx
-        /etc/init.d/nginx enable
-        EOF
-        chmod +x files/etc/uci-defaults/99-nginx
+/etc/init.d/php8-fpm enable || true
+/etc/init.d/nginx enable || true
+/etc/init.d/freeradius3 enable || true
+/etc/init.d/opennds enable || true
+exit 0
+EOF
+          chmod +x files/etc/uci-defaults/99-enable-wifi-and-services
 
-        # OpenNDS FAS
-        cat > files/etc/uci-defaults/99-opennds << "EOF"
-        #!/bin/sh
-        uci batch <<EOT
-          set opennds.@opennds[0].enabled='1'
-          set opennds.@opennds[0].GatewayInterface='br-lan'
-          set opennds.@opennds[0].FASPort='2080'
-          set opennds.@opennds[0].FASRemoteIP='127.0.0.1'
-          set opennds.@opennds[0].FASPath='/nds/fas-aes.php'
-          set opennds.@opennds[0].MaxClients='50'
-        EOT
-        uci commit opennds
-        /etc/init.d/opennds enable
-        EOF
-        chmod +x files/etc/uci-defaults/99-opennds
+          cat > files/etc/nginx/conf.d/opennds.conf <<'EOF'
+server {
+    listen 2080 default_server;
+    listen [::]:2080 default_server;
+    root /www;
+    index index.php index.html;
 
-        # Set default theme Argon
-        cat > files/etc/uci-defaults/99-luci-theme << "EOF"
-        #!/bin/sh
-        uci set luci.main.mediaurlbase='/luci-static/argon'
-        uci commit luci
-        EOF
-        chmod +x files/etc/uci-defaults/99-luci-theme
+    location /nds/ {
+        try_files $uri $uri/ =404;
+    }
 
-        # Dummy FAS
-        echo "<?php echo 'OpenNDS FAS Dummy - OK'; ?>" > files/www/nds/fas-aes.php
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_pass unix:/run/php-fpm.sock;
+    }
+}
+EOF
 
-    - name: Download luci-theme-argon
-      run: |
-        git clone https://github.com/jerrykuku/luci-theme-argon.git
-        mkdir -p imagebuilder/files/www/luci-static
-        mkdir -p imagebuilder/files/usr/lib/lua/luci/view/themes
-        cp -r luci-theme-argon/luci-static/argon imagebuilder/files/www/luci-static/
-        cp -r luci-theme-argon/luasrc/view/themes/argon imagebuilder/files/usr/lib/lua/luci/view/themes/
+          cat > files/www/nds/fas-aes.php <<'EOF'
+<?php
+echo "FAS Example - replace with secure fas-aes.php from openNDS";
+?>
+EOF
 
-    - name: Build firmware with filtered packages
-      working-directory: ./imagebuilder
-      run: |
-        echo "Using packages: $FINAL_PACKAGES"
-        make image PACKAGES="$FINAL_PACKAGES" FILES="files"
+          cat > files/etc/opennds/opennds.conf <<'EOF'
+faskey = mysharedkey
+fas_remote = 127.0.0.1
+fas_port = 2080
+fas_path = /nds/fas-aes.php
+fas_secure_enabled = 2
+radius_enable = yes
+radius_server = 127.0.0.1
+radius_port = 1812
+radius_secret = radiussecret
+EOF
 
-    - name: Upload firmware artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: openwrt-x86-64-22.03.7
-        path: imagebuilder/bin/targets/x86/64/*
+      - name: Build firmware
+        working-directory: openwrt-src
+        env:
+          CCACHE_DIR: ~/.ccache
+          FORCE_UNSAFE_CONFIGURE: "1"
+        run: |
+          make defconfig
+          make -j${{ env.JOBS }} V=s
+
+      - name: Upload firmware image
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-x86_64-firmware
+          path: |
+            openwrt-src/bin/targets/x86/64/*combined*.img.gz
