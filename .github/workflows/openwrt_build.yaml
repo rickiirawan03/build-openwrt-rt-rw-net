@@ -2,9 +2,6 @@ name: Build OpenWrt 22.03.7 x86_64
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
 
 jobs:
   build:
@@ -27,14 +24,48 @@ jobs:
         tar -xf openwrt-imagebuilder-22.03.7-x86-64.Linux-x86_64.tar.xz
         mv openwrt-imagebuilder-22.03.7-x86-64.Linux-x86_64 imagebuilder
 
+    - name: List available packages
+      working-directory: ./imagebuilder
+      run: |
+        make info > ../available-packages.txt
+
+    - name: Upload available packages list
+      uses: actions/upload-artifact@v4
+      with:
+        name: available-packages
+        path: available-packages.txt
+
+    - name: Filter wanted packages
+      id: filter
+      working-directory: ./imagebuilder
+      run: |
+        # Paket yang diminta
+        WANTED="kmod-ath9k wpad-openssl freeradius3 freeradius3-utils freeradius3-default \
+        php8 php8-cli php8-cgi php8-fpm \
+        nginx opennds mariadb-server mariadb-client \
+        luci luci-app-argon-config \
+        mwan3 luci-app-mwan3"
+
+        # Daftar paket tersedia
+        AVAILABLE=$(awk '/^Package:/ {print $2}' ../available-packages.txt | sort -u)
+        FINAL=""
+        for pkg in $WANTED; do
+          if echo "$AVAILABLE" | grep -q "^$pkg$"; then
+            FINAL="$FINAL $pkg"
+          else
+            echo "⚠️ Package not found, skipping: $pkg"
+          fi
+        done
+        echo "FINAL_PACKAGES=$FINAL" >> $GITHUB_ENV
+
     - name: Add uci-defaults configs
       working-directory: ./imagebuilder
       run: |
         mkdir -p files/etc/uci-defaults
         mkdir -p files/www/nds
 
-        # --- WiFi config ---
-        cat > files/etc/uci-defaults/99-wifi-config << "EOF"
+        # WiFi SSID Latihan
+        cat > files/etc/uci-defaults/99-wifi << "EOF"
         #!/bin/sh
         uci batch <<EOT
           set wireless.radio0.disabled='0'
@@ -48,23 +79,21 @@ jobs:
         uci commit wireless
         wifi reload
         EOF
-        chmod +x files/etc/uci-defaults/99-wifi-config
+        chmod +x files/etc/uci-defaults/99-wifi
 
-        # --- Nginx config (80 + 2080) ---
-        cat > files/etc/uci-defaults/99-nginx-config << "EOF"
+        # Nginx (80 + 2080)
+        cat > files/etc/uci-defaults/99-nginx << "EOF"
         #!/bin/sh
         uci batch <<EOT
           set nginx.main=nginx
           set nginx.main.enabled='1'
 
-          # Default HTTP
           set nginx.http=server
           set nginx.http.listen='80'
           set nginx.http.server_name='_'
           set nginx.http.locations='/'
           set nginx.http.locations.target='/www'
 
-          # Extra server block for FAS on port 2080
           add nginx server
           set nginx.@server[-1].listen='2080'
           set nginx.@server[-1].server_name='_'
@@ -74,10 +103,10 @@ jobs:
         uci commit nginx
         /etc/init.d/nginx enable
         EOF
-        chmod +x files/etc/uci-defaults/99-nginx-config
+        chmod +x files/etc/uci-defaults/99-nginx
 
-        # --- OpenNDS FAS config ---
-        cat > files/etc/uci-defaults/99-opennds-config << "EOF"
+        # OpenNDS FAS
+        cat > files/etc/uci-defaults/99-opennds << "EOF"
         #!/bin/sh
         uci batch <<EOT
           set opennds.@opennds[0].enabled='1'
@@ -90,25 +119,32 @@ jobs:
         uci commit opennds
         /etc/init.d/opennds enable
         EOF
-        chmod +x files/etc/uci-defaults/99-opennds-config
+        chmod +x files/etc/uci-defaults/99-opennds
 
-        # --- Dummy FAS PHP file ---
-        cat > files/www/nds/fas-aes.php << "EOF"
-        <?php
-        echo "OpenNDS FAS Dummy - OK";
-        ?>
+        # Set default theme Argon
+        cat > files/etc/uci-defaults/99-luci-theme << "EOF"
+        #!/bin/sh
+        uci set luci.main.mediaurlbase='/luci-static/argon'
+        uci commit luci
         EOF
+        chmod +x files/etc/uci-defaults/99-luci-theme
 
-    - name: Build firmware with extra packages
+        # Dummy FAS
+        echo "<?php echo 'OpenNDS FAS Dummy - OK'; ?>" > files/www/nds/fas-aes.php
+
+    - name: Download luci-theme-argon
+      run: |
+        git clone https://github.com/jerrykuku/luci-theme-argon.git
+        mkdir -p imagebuilder/files/www/luci-static
+        mkdir -p imagebuilder/files/usr/lib/lua/luci/view/themes
+        cp -r luci-theme-argon/luci-static/argon imagebuilder/files/www/luci-static/
+        cp -r luci-theme-argon/luasrc/view/themes/argon imagebuilder/files/usr/lib/lua/luci/view/themes/
+
+    - name: Build firmware with filtered packages
       working-directory: ./imagebuilder
       run: |
-        make image \
-          PACKAGES="kmod-ath9k wpad-openssl freeradius3 freeradius3-utils freeradius3-default \
-          php8 php8-cli php8-cgi php8-fpm php8-fastcgi \
-          nginx nginx-mod-luci opennds mariadb-server mariadb-client \
-          luci luci-theme-argon luci-app-argon-config \
-          mwan3 luci-app-mwan3" \
-          FILES="files"
+        echo "Using packages: $FINAL_PACKAGES"
+        make image PACKAGES="$FINAL_PACKAGES" FILES="files"
 
     - name: Upload firmware artifact
       uses: actions/upload-artifact@v4
