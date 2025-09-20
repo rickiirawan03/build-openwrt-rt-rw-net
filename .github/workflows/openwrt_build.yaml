@@ -8,7 +8,6 @@ on:
 env:
   OPENWRT_REPO: https://github.com/openwrt/openwrt.git
   OPENWRT_VERSION: "v24.10.2"
-  TARGET_PROFILE: "x86/64"
   JOBS: "2"
 
 jobs:
@@ -44,12 +43,11 @@ jobs:
       - name: Prepare feeds and custom packages
         run: |
           cd openwrt-src
-          cat >> feeds.conf.default <<'EOF'
-src-git packages https://git.openwrt.org/feed/packages.git
-src-git luci https://git.openwrt.org/project/luci.git
-src-git routing https://git.openwrt.org/feed/routing.git
-src-git telephony https://git.openwrt.org/feed/telephony.git
-EOF
+          echo "src-git packages https://git.openwrt.org/feed/packages.git" >> feeds.conf.default
+          echo "src-git luci https://git.openwrt.org/project/luci.git" >> feeds.conf.default
+          echo "src-git routing https://git.openwrt.org/feed/routing.git" >> feeds.conf.default
+          echo "src-git telephony https://git.openwrt.org/feed/telephony.git" >> feeds.conf.default
+
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
