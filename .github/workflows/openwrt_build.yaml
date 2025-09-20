@@ -1,47 +1,57 @@
+# Nama workflow yang akan muncul di tab Actions GitHub
 name: Build OpenWrt 22.03.0 (x86/64) Image Builder
 
-# Workflow ini bisa dijalankan secara manual dari tab Actions di GitHub
+# Pemicu workflow: dapat dijalankan secara manual
 on:
   workflow_dispatch:
 
 jobs:
   build:
+    # Menggunakan OS Ubuntu versi terbaru yang disediakan GitHub
     runs-on: ubuntu-latest
 
     steps:
+      # Langkah 1: Mengunduh repositori Anda ke runner
       - name: 1. Checkout
         uses: actions/checkout@v4
 
-      - name: 2. Install Dependencies (Sesuai Permintaan)
+      # Langkah 2: Menginstal semua paket yang dibutuhkan untuk proses build
+      - name: 2. Install Dependencies
         run: |
           sudo apt update
           sudo apt install -y build-essential clang flex bison g++ gawk \
             gcc-multilib g++-multilib gettext git libncurses-dev libssl-dev \
             python3-setuptools rsync swig unzip zlib1g-dev file wget
 
-      - name: 3. Download and Extract OpenWrt Image Builder
+      # Langkah 3: Mengunduh, mengekstrak, dan menjalankan proses build dalam satu langkah
+      - name: 3. Build Firmware
         run: |
-          wget https://archive.openwrt.org/releases/22.03.0/targets/x86/64/openwrt-imagebuilder-22.03.0-x86-64.Linux-x86_64.tar.xz
-          tar -xJvf openwrt-imagebuilder-*.tar.xz
-          cd openwrt-imagebuilder-*/
+          # Tentukan nama direktori builder untuk kemudahan
+          BUILDER_DIR="openwrt-imagebuilder-22.03.0-x86-64.Linux-x86_64"
 
-      - name: 4. Build Firmware Image
-        run: |
-          # Masuk ke direktori image builder
-          cd openwrt-imagebuilder-*/
+          # Unduh dan ekstrak Image Builder
+          wget https://archive.openwrt.org/releases/22.03.0/targets/x86/64/${BUILDER_DIR}.tar.xz
+          tar -xJvf ${BUILDER_DIR}.tar.xz
 
-          # Daftar paket yang akan di-install
-          PACKAGES="luci luci-ssl-openssl opennds freeradius3 kmod-ath9k wpad-openssl rp-ppoe-server luci-app-opennds nano htop"
+          # Masuk ke direktori Image Builder
+          cd ${BUILDER_DIR}
 
-          # Jalankan perintah build
-          make image \
-            PROFILE="generic" \
-            PACKAGES="${PACKAGES}"
+          # Daftar paket kustom yang akan di-install ke dalam firmware
+          # Backslash (\) digunakan agar daftar paket lebih mudah dibaca
+          PACKAGES="luci luci-ssl-openssl opennds freeradius3 \
+                    kmod-ath9k wpad-openssl rp-ppoe-server \
+                    luci-app-opennds nano htop"
 
-      - name: 5. Upload Firmware Artifact
+          # Jalankan perintah 'make' untuk membuat image firmware
+          # Perintah ini dijalankan di dalam direktori BUILDER_DIR
+          make image PROFILE="generic" PACKAGES="${PACKAGES}"
+
+      # Langkah 4: Mengunggah hasil build sebagai artifact
+      - name: 4. Upload Firmware Artifact
         uses: actions/upload-artifact@v4
         with:
+          # Nama artifact yang akan muncul di halaman ringkasan workflow
           name: openwrt-22.03.0-x86_64-firmware
-          # Path hasil build image
-          path: openwrt-imagebuilder-*/bin/targets/x86/64/*.img.gz
-          
+          # Path ke file image yang sudah jadi. Wildcard (*) digunakan untuk mencocokkan nama file yang dinamis
+          path: openwrt-imagebuilder-22.03.0-x86-64.Linux-x86_64/bin/targets/x86/64/*.img.gz
+
