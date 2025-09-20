@@ -35,14 +35,17 @@ jobs:
 
       - name: Clone OpenWrt source
         run: |
+          rm -rf openwrt-src
           git clone --depth 1 "${{ env.OPENWRT_REPO }}" openwrt-src
           cd openwrt-src
-          git fetch --tags --depth=1 origin
+          git fetch --tags --depth=1 origin || true
           git checkout "${{ env.OPENWRT_VERSION }}" || true
+          pwd
+          git rev-parse --abbrev-ref HEAD || git describe --tags --exact-match || true
 
       - name: Prepare feeds and custom packages
         run: |
-          cd openwrt-src
+          cd openwrt-src || exit 1
           echo "src-git packages https://git.openwrt.org/feed/packages.git" >> feeds.conf.default
           echo "src-git luci https://git.openwrt.org/project/luci.git" >> feeds.conf.default
           echo "src-git routing https://git.openwrt.org/feed/routing.git" >> feeds.conf.default
@@ -52,17 +55,20 @@ jobs:
           ./scripts/feeds install -a
 
           mkdir -p package/community
-          git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon.git package/community/luci-theme-argon
-          git clone --depth 1 https://github.com/jerrykuku/luci-app-argon-config.git package/community/luci-app-argon-config
-          git clone --depth 1 https://github.com/vernesong/OpenClash.git package/community/openclash
+          git clone --depth 1 https://github.com/jerrykuku/luci-theme-argon.git package/community/luci-theme-argon || true
+          git clone --depth 1 https://github.com/jerrykuku/luci-app-argon-config.git package/community/luci-app-argon-config || true
+          git clone --depth 1 https://github.com/vernesong/OpenClash.git package/community/openclash || true
           git clone --depth 1 https://github.com/openNDS/openNDS.git package/community/opennds || true
 
       - name: Create .config
         run: |
-          cd openwrt-src
-          echo "CONFIG_TARGET_x86=y" > .config
+          cd openwrt-src || exit 1
+          # start fresh
+          : > .config
+          echo "CONFIG_TARGET_x86=y" >> .config
           echo "CONFIG_TARGET_x86_64=y" >> .config
           echo "CONFIG_TARGET_x86_64_generic=y" >> .config
+
           echo "CONFIG_PACKAGE_luci=y" >> .config
           echo "CONFIG_PACKAGE_nginx=y" >> .config
           echo "CONFIG_PACKAGE_nginx-mod-luci=y" >> .config
@@ -83,74 +89,72 @@ jobs:
           echo "CONFIG_PACKAGE_wpad-openssl=y" >> .config
           echo "CONFIG_PACKAGE_openclash=y" >> .config
 
-      - name: Copy overlay files
+      - name: Copy overlay files (no heredoc)
         run: |
-          cd openwrt-src
+          cd openwrt-src || exit 1
           mkdir -p files/etc/uci-defaults
           mkdir -p files/etc/nginx/conf.d
           mkdir -p files/etc/opennds
           mkdir -p files/www/nds
 
-          cat > files/etc/uci-defaults/99-enable-wifi-and-services <<'EOF'
-#!/bin/sh
-uci set wireless.@wifi-device[0].disabled='0' || true
-uci foreach wifi-iface 'uci set wireless.@wifi-iface[$id].disabled=0' || true
-uci commit wireless
+          # uci-defaults script - enable wifi, firewall, enable services
+          printf "%s\n" "#!/bin/sh" \
+            "uci set wireless.@wifi-device[0].disabled='0' || true" \
+            "uci foreach wifi-iface 'uci set wireless.@wifi-iface[\$id].disabled=0' || true" \
+            "uci commit wireless" \
+            "" \
+            "uci set firewall.allow_nginx='rule' || true" \
+            "uci set firewall.allow_nginx.name='Allow-Nginx-2080' || true" \
+            "uci set firewall.allow_nginx.src='*' || true" \
+            "uci set firewall.allow_nginx.dest_port='2080' || true" \
+            "uci set firewall.allow_nginx.target='ACCEPT' || true" \
+            "uci set firewall.allow_nginx.proto='tcp' || true" \
+            "uci commit firewall" \
+            "" \
+            "/etc/init.d/php8-fpm enable || true" \
+            "/etc/init.d/nginx enable || true" \
+            "/etc/init.d/freeradius3 enable || true" \
+            "/etc/init.d/opennds enable || true" \
+            "exit 0" \
+            > files/etc/uci-defaults/99-enable-wifi-and-services
 
-uci -q batch <<-EOC
-set firewall.allow_nginx=rule
-set firewall.allow_nginx.name='Allow-Nginx-2080'
-set firewall.allow_nginx.src='*'
-set firewall.allow_nginx.dest_port='2080'
-set firewall.allow_nginx.target='ACCEPT'
-set firewall.allow_nginx.proto='tcp'
-commit firewall
-EOC
-
-/etc/init.d/php8-fpm enable || true
-/etc/init.d/nginx enable || true
-/etc/init.d/freeradius3 enable || true
-/etc/init.d/opennds enable || true
-exit 0
-EOF
           chmod +x files/etc/uci-defaults/99-enable-wifi-and-services
 
-          cat > files/etc/nginx/conf.d/opennds.conf <<'EOF'
-server {
-    listen 2080 default_server;
-    listen [::]:2080 default_server;
-    root /www;
-    index index.php index.html;
+          # nginx conf for 2080 and PHP-FPM (escape $ as \$ to keep literal in file)
+          printf "%s\n" \
+            "server {" \
+            "    listen 2080 default_server;" \
+            "    listen [::]:2080 default_server;" \
+            "    root /www;" \
+            "    index index.php index.html index.htm;" \
+            "" \
+            "    location /nds/ {" \
+            "        try_files \$uri \$uri/ =404;" \
+            "    }" \
+            "" \
+            "    location ~ \\.php\$ {" \
+            "        include fastcgi_params;" \
+            "        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;" \
+            "        fastcgi_pass unix:/run/php-fpm.sock;" \
+            "    }" \
+            "}" \
+            > files/etc/nginx/conf.d/opennds.conf
 
-    location /nds/ {
-        try_files $uri $uri/ =404;
-    }
+          # example fas-aes.php placeholder
+          printf "%s\n" "<?php" 'echo "FAS Example - replace with secure fas-aes.php from openNDS";' "?>" > files/www/nds/fas-aes.php
 
-    location ~ \.php$ {
-        include fastcgi_params;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        fastcgi_pass unix:/run/php-fpm.sock;
-    }
-}
-EOF
-
-          cat > files/www/nds/fas-aes.php <<'EOF'
-<?php
-echo "FAS Example - replace with secure fas-aes.php from openNDS";
-?>
-EOF
-
-          cat > files/etc/opennds/opennds.conf <<'EOF'
-faskey = mysharedkey
-fas_remote = 127.0.0.1
-fas_port = 2080
-fas_path = /nds/fas-aes.php
-fas_secure_enabled = 2
-radius_enable = yes
-radius_server = 127.0.0.1
-radius_port = 1812
-radius_secret = radiussecret
-EOF
+          # opennds config
+          printf "%s\n" \
+            "faskey = mysharedkey" \
+            "fas_remote = 127.0.0.1" \
+            "fas_port = 2080" \
+            "fas_path = /nds/fas-aes.php" \
+            "fas_secure_enabled = 2" \
+            "radius_enable = yes" \
+            "radius_server = 127.0.0.1" \
+            "radius_port = 1812" \
+            "radius_secret = radiussecret" \
+            > files/etc/opennds/opennds.conf
 
       - name: Build firmware
         working-directory: openwrt-src
